@@ -1,0 +1,62 @@
+# ============================================================
+# PyTorch with CUDA Support
+# ============================================================
+# PyTorch 2.x with CUDA 11.8 support
+# Install from PyTorch index for CUDA version you have:
+# For CUDA 11.8: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# For CPU only: pip install torch torchvision
+
+torch>=2.0.0
+torchvision>=0.15.0
+
+# ============================================================
+# Numerical Computing
+# ============================================================
+numpy>=1.23.5,<2.0.0
+scipy>=1.10.0
+
+# ============================================================
+# Data Loading & Processing
+# ============================================================
+Pillow>=9.0.0
+idx2numpy>=1.0.0
+
+# ============================================================
+# Visualization
+# ============================================================
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ============================================================
+# Utilities
+# ============================================================
+tqdm>=4.65.0
+scikit-learn>=1.2.0
+
+# ============================================================
+# GPU SETUP INSTRUCTIONS (Windows)
+# ============================================================
+# 1. Install NVIDIA GPU drivers from:
+#    https://www.nvidia.com/Download/index.aspx
+#
+# 2. Install CUDA Toolkit 11.8 from:
+#    https://developer.nvidia.com/cuda-11-8-0-download-archive
+#    Select: Windows -> Your OS version -> x86_64
+#
+# 3. Install cuDNN 8.7 for CUDA 11.x from:
+#    https://developer.nvidia.com/cudnn-downloads
+#    Select: Windows -> x86_64 -> 11.x -> 8.7.x
+#    Copy cuDNN files to CUDA installation directory
+#
+# 4. Add to PATH (if not done automatically):
+#    C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin
+#    C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\libnvvp
+#
+# 5. Verify installation:
+#    nvcc --version
+#    python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+#
+# 6. For PyTorch with CUDA 11.8, install using:
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+# ============================================================

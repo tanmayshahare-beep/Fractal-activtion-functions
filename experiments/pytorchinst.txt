@@ -1,0 +1,126 @@
+1. Verify Data Pipeline
+Add these prints right before the training loop:
+
+python
+# In main(), after creating data loaders
+sample_images, sample_labels = next(iter(train_loader))
+print(f"Batch shape: {sample_images.shape}")   # Should be [128, 1, 28, 28]
+print(f"Image min: {sample_images.min():.3f}, max: {sample_images.max():.3f}")  # Should be near 0 and 1
+print(f"Labels: {sample_labels[:10]}")  # Should be 0-9
+If the values are not in [0,1], your preprocessing is wrong.
+
+2. Check Model Forward Pass
+Add a quick test after model creation:
+
+python
+model = model_fn()
+model.eval()
+with torch.no_grad():
+    test_out = model(sample_images.to(device))
+    print(f"Output shape: {test_out.shape}")  # Should be [128, 10]
+    print(f"Output sample (first batch): {test_out[0]}")  # Raw logits (not probabilities)
+If the output values are very large (>100) or very small (<1e-4), there may be an initialization or architecture issue.
+
+3. Remove Data Augmentation Temporarily
+Set use_augmentation=False and use simple ToTensor() only. Aggressive augmentation on MNIST can sometimes slow initial learning, but it shouldn't cause 47%. Still, rule it out.
+
+4. Verify Model Architecture Matches TensorFlow
+Your TensorFlow ReLU model achieved 99.40% with 422,538 parameters. In PyTorch, ensure:
+
+Same number of conv layers (32 and 64 filters)
+
+Same kernel size (3x3), padding='same' (in PyTorch, use padding=1 for 3x3 stride=1 to keep size)
+
+BatchNorm after conv, before activation
+
+MaxPooling after activation
+
+Dropout rates identical
+
+Final dense layer: 128 units, then output 10 (no softmax)
+
+Print parameter count and compare: should be very close (~422k). If it's off by a lot, the model definition in src.models might be wrong.
+
+5. Check Activation Functions
+You're importing ExponentialFTA etc. from src.activations. Ensure these custom layers are implemented correctly for PyTorch. Common pitfalls:
+
+They must subclass nn.Module
+
+They should handle input shape correctly (especially for conv layers)
+
+They should not modify the input in-place if it breaks autograd
+
+Test a single activation layer:
+
+python
+act = ExponentialFTA(num_units=32, depth=2, branch_factor=2)
+test_tensor = torch.randn(4, 32, 28, 28)  # simulate conv output
+out = act(test_tensor)
+print(out.shape)  # Should be (4, 32, 28, 28)
+6. Learning Rate and Optimizer
+Your TensorFlow script uses Adam with lr=0.001, exactly the same as here. That's fine. However, if your custom activation layers have many parameters (like leaf_params), they might benefit from a slightly different LR, but that wouldn't cause 47%.
+
+7. Gradient Flow Check
+Add this after first backward pass:
+
+python
+# After loss.backward()
+for name, param in model.named_parameters():
+    if param.grad is not None:
+        print(f"{name}: grad mean={param.grad.mean():.6f}, std={param.grad.std():.6f}")
+If gradients are extremely small (e.g., 1e-8), something is blocking them (e.g., double softmax, saturating activations).
+
+8. Loss Function Mismatch
+Ensure your model's final layer does not include a softmax. nn.CrossEntropyLoss applies softmax internally. If your model outputs probabilities (e.g., from a softmax), the loss will be computed on probabilities, leading to vanishing gradients. In your TensorFlow model, final layer had activation='softmax' but you used sparse_categorical_crossentropy which also expects logits by default? Actually, in TF with from_logits=False (default), the loss expects probabilities. In TF, you have softmax and loss with from_logits=False, so it's correct. In PyTorch, you must remove softmax from the model.
+
+Check your model definition in src.models – if it includes nn.Softmax(dim=1) at the end, remove it.
+
+9. Early Stopping / Best Model Loading
+You're saving and loading the best model state. Ensure that after loading, you set model.eval() for evaluation. But that shouldn't affect final test accuracy if you evaluate after loading.
+
+10. DataLoader Shuffle
+shuffle=True for training is correct.
+
+🧪 Quick Minimal Test
+Replace the complicated training with a minimal script to isolate the issue:
+
+python
+# Minimal test – use a tiny subset, simple SGD
+model = create_cnn_baseline(activation='relu')
+model.to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=0.01)
+
+# Use only first 1000 samples
+subset = torch.utils.data.Subset(train_dataset, range(1000))
+loader = DataLoader(subset, batch_size=64, shuffle=True)
+
+for epoch in range(5):
+    model.train()
+    total_loss = 0
+    for images, labels in loader:
+        images, labels = images.to(device), labels.to(device)
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    print(f"Epoch {epoch}: Loss = {total_loss/len(loader):.4f}")
+If loss decreases nicely (e.g., from ~2.3 to <0.5), then the model and data pipeline are fine. If loss stays high (~2.3), the model is not learning – likely a gradient issue.
+
+📌 Most Likely Culprits
+Model output includes softmax – causing CrossEntropyLoss to receive probabilities, not logits.
+
+Incorrect implementation of custom activation layers – check their forward pass and parameter shapes.
+
+Data not normalized correctly – maybe images are still 0-255 (though you divide by 255).
+
+BatchNorm behavior – ensure model.train() and model.eval() are used appropriately; BN running stats might be off.
+
+🚀 Next Steps
+Run the minimal test above with the simplest model (ReLU). If it works, then the issue is likely in your custom activations.
+
+If minimal test fails, check data loading more thoroughly.
+
+If it works but full training fails, compare the full training code with the minimal version – maybe augmentation or scheduler is interfering.

@@ -1,0 +1,99 @@
+Congratulations on getting your PyTorch training working! That's a huge milestone. Now, asking about data leakage is a mark of a true researcher who cares about the validity of their results. I can help you verify that your experiments are clean.
+
+Before we start, it's important to clarify that the search results provided cover specialized topics like memory leak detection in PyTorch internals  or data leakage in LLMs and recommender systems , and even an R package for tabular data . While these are interesting, they don't directly offer a standard "data leakage detection script" for a standard PyTorch image classification pipeline.
+
+For your specific needs, I can provide you with a practical, conceptual script based on standard best practices in machine learning to help you check for and prevent the most common forms of data leakage in your setup.
+
+🔍 Understanding "Data Leakage" in Your Context
+For your project, "data leakage" primarily means that information from your test set has inadvertently influenced the training process. This can make your validation and test scores look artificially good and would mean your model wouldn't perform as well on truly new, unseen data. The main risks for your CNN on MNIST/Fashion-MNIST are:
+
+Train/Test Contamination: The most common form. It happens when the exact same image data exists in both your training and test sets.
+
+Target Leakage: When some feature in your data indirectly provides information about the target label. This is less common in image data where the pixels are the features, but it's a good general principle to check.
+
+Augmentation Leakage: This is a subtle one. If your data augmentation (like random rotations) is applied after splitting your data, but you accidentally fit the augmentation parameters (like mean/std for normalization) on the entire dataset including the test set, that's a form of leakage.
+
+🛡️ Practical Checks for a Clean Pipeline
+Here are the steps you can implement in your code to verify there's no data leakage.
+
+1. Verify the Train-Test Split (Checking for Contamination)
+The most straightforward check is to ensure there is no overlap between your training and test sets. For image data, you can compare the unique pixel values or, more reliably, use a hash of the image array.
+
+Add this check right after you load and preprocess your data:
+
+python
+import hashlib
+import numpy as np
+
+def check_train_test_overlap(x_train, x_test, verbose=True):
+    """Checks for any exact image duplicates between train and test sets."""
+    train_hashes = {hashlib.md5(img.tobytes()).hexdigest() for img in x_train}
+    test_hashes = {hashlib.md5(img.tobytes()).hexdigest() for img in x_test}
+    
+    overlap = train_hashes.intersection(test_hashes)
+    if overlap:
+        print(f"❌ CRITICAL: Found {len(overlap)} duplicate images between train and test sets!")
+        # You can optionally inspect the first few overlapping images
+        return False
+    else:
+        if verbose:
+            print("✅ Train-test split check passed: No exact image duplicates found.")
+        return True
+
+# Example usage after loading your data:
+# (x_train, y_train), (x_test, y_test) = load_mnist_local(mnist_dir)
+# x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.0
+# x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.0
+
+check_train_test_overlap(x_train, x_test)
+2. Scrutinize the Target Variable
+For image classification, the target is the label. There's no risk of the target "leaking" back into the pixels if you've handled your data correctly. However, if you were doing any feature engineering (which you aren't), this is where you'd be extra cautious.
+
+3. Audit the Data Augmentation Pipeline
+This is a crucial check that is often overlooked. Ensure that your augmentation transforms are applied only to the training data. Your test_loader should use a transform that only converts the image to a tensor and does not apply random augmentations. Your provided script already does this correctly:
+
+train_transform: Includes RandomRotation and RandomAffine.
+
+test_transform: Only includes ToTensor().
+
+This is correct. To be extra sure, you can run a quick test:
+
+python
+def check_augmentation_leakage(train_dataset, val_dataset):
+    """Ensure validation transforms don't contain random augmentations."""
+    val_transform = val_dataset.transform
+    # Check for common random transforms. Add to this list if needed.
+    random_transforms = ['RandomRotation', 'RandomAffine', 'RandomHorizontalFlip', 'RandomCrop']
+    
+    for t in random_transforms:
+        if hasattr(val_transform, t) or any(t in str(trans) for trans in val_transform.transforms):
+            print(f"❌ LEAKAGE DETECTED: Validation set uses {t}!")
+            return False
+    
+    print("✅ Augmentation check passed: Validation transforms look deterministic.")
+    return True
+
+# Example usage:
+# check_augmentation_leakage(train_dataset, val_dataset)
+💡 Recommendations for Publication-Ready Research
+Based on your description of your PyTorch script, it seems you are already following best practices: you have a clear val_split, separate transforms for train and test, and you're not doing anything unusual with the labels. This is excellent!
+
+To make your results bulletproof for a paper, I would recommend:
+
+Run the Hash Check: Include the check_train_test_overlap function and run it at the start of your script. Print the result to your log file. This provides concrete evidence in your experiment logs that no data contamination occurred.
+
+Explicitly Set Random Seeds: You're likely already doing this, but ensure you set seeds for PyTorch, NumPy, and Python's random module at the very beginning of your script to guarantee reproducibility.
+
+python
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+Document Your Split: In your paper's experimental setup section, clearly state: "The training set was randomly split into training (90%) and validation (10%) sets. The test set was held out and only used for final evaluation after model selection. Data augmentation was applied exclusively to the training split."
+
+By running these checks and documenting your process, you provide strong evidence that your reported results (like your EFTA model's 99.55% accuracy) are valid and not due to any methodological flaw. This attention to detail is exactly what makes a paper strong.
+
+If you'd like, I can help you integrate these checks into a single, comprehensive "pre-flight" function to run before your training begins. Good luck with the final experiments!
