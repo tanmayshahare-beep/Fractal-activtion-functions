@@ -1,6 +1,29 @@
-# Datasets
+# Datasets and data files
 datasets/
 !datasets/__init__.py
+data/
+*.npz
+*.gz
+*-ubyte
+
+# Binary result/visualization files
+*.pkl
+*.msgpack
+
+# Large binary files
+*.pdf
+*.zip
+*.ipynb
+*.png
+*.jpg
+*.jpeg
+
+# Tools (external repos / submodules)
+tools/
+
+# IDE / tool config
+.qwen/
+.idea/
 
 # Output files
 outputs/
