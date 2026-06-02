@@ -1,0 +1,29 @@
+{
+  "models": [
+    {
+      "trial_id": "trial_relu",
+      "name": "ReLU Baseline",
+      "parameters": 422090
+    },
+    {
+      "trial_id": "trial_fta_d1k2",
+      "name": "FTA (depth=1, k=2)",
+      "parameters": 465546
+    },
+    {
+      "trial_id": "trial_fta_d2k2",
+      "name": "FTA (depth=2, k=2)",
+      "parameters": 509002
+    },
+    {
+      "trial_id": "trial_efta_d1k2",
+      "name": "EFTA (depth=1, k=2)",
+      "parameters": 423434
+    },
+    {
+      "trial_id": "trial_efta_d2k2",
+      "name": "EFTA (depth=2, k=2)",
+      "parameters": 424778
+    }
+  ]
+}

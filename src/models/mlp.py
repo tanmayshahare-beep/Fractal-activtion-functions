@@ -8,6 +8,7 @@ for the Dynamic Activation Functions research.
 import torch
 import torch.nn as nn
 from ..activations import FractalTreeActivation, ExponentialFTA, MaxoutLayer
+from ..activations.react_efta import ReActEFTA
 
 
 class MLPBaseline(nn.Module):
@@ -163,3 +164,42 @@ def create_mlp_maxout(k=4, input_shape=(784,), num_classes=10):
     """Create MLP with Maxout."""
     input_size = input_shape[0] if isinstance(input_shape, tuple) else input_shape
     return MLPMaxout(input_size=input_size, num_classes=num_classes, k=k)
+
+
+class MLPReActEFTA(nn.Module):
+    """
+    MLP with REAct-EFTA (Rational Exponential Fractal Tree Activation).
+
+    Args:
+        input_size: Size of input features
+        hidden_size: Size of hidden layer
+        num_classes: Number of output classes
+        depth: Depth of the REAct-EFTA tree
+        branch_factor: Branching factor of the REAct-EFTA tree
+        clamp_value: Clamping value for numerical stability
+    """
+
+    def __init__(self, input_size=784, hidden_size=128, num_classes=10,
+                 depth=2, branch_factor=2, clamp_value=5.0):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size, bias=False)
+        self.bn1 = nn.BatchNorm1d(hidden_size)
+        self.react_efta = ReActEFTA(
+            num_units=hidden_size, depth=depth, branch_factor=branch_factor,
+            input_dim=hidden_size, clamp_value=clamp_value)
+        self.fc2 = nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)  # Flatten
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = self.react_efta(x)
+        x = self.fc2(x)
+        return x
+
+
+def create_mlp_react_efta(depth=2, branch_factor=2, input_shape=(784,), num_classes=10):
+    """Create MLP with REAct-EFTA."""
+    input_size = input_shape[0] if isinstance(input_shape, tuple) else input_shape
+    return MLPReActEFTA(input_size=input_size, num_classes=num_classes,
+                        depth=depth, branch_factor=branch_factor)

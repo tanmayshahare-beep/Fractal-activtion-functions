@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ..activations import FractalTreeActivation, ExponentialFTA, MaxoutLayer
+from ..activations.react_efta import ReActEFTA
+from ..activations.enhanced_react_efta import EnhancedReActEFTA
 
 
 class CNNBaseline(nn.Module):
@@ -339,3 +341,98 @@ def create_cnn_maxout(k=4, input_shape=(1, 28, 28), num_classes=10):
     """Create CNN with Maxout."""
     input_channels = input_shape[0] if isinstance(input_shape, tuple) else 1
     return CNNMaxout(k=k, input_channels=input_channels, num_classes=num_classes)
+
+
+class CNNReActEFTA(nn.Module):
+    """
+    CNN with REAct-EFTA (Rational Exponential Fractal Tree Activation).
+
+    Architecture:
+        Input -> Conv2D(32) -> BN -> REAct-EFTA -> MaxPool -> Dropout
+              -> Conv2D(64) -> BN -> REAct-EFTA -> MaxPool -> Dropout
+              -> Flatten -> Dense(128) -> BN -> REAct-EFTA -> Dropout
+              -> Dense(num_classes)
+
+    Args:
+        depth: Depth of the REAct-EFTA tree
+        branch_factor: Branching factor of the REAct-EFTA tree
+        input_channels: Number of input channels
+        input_size: Input image size (height=width) for computing fc1 size
+        num_classes: Number of output classes
+        init_strategy: Parameter initialization strategy
+        clamp_value: Clamping value for numerical stability
+    """
+
+    def __init__(self, depth=2, branch_factor=2, input_channels=1, input_size=28,
+                 num_classes=10, init_strategy='tanh', clamp_value=5.0):
+        super().__init__()
+
+        # Block 1
+        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.react_efta1 = ReActEFTA(num_units=32, depth=depth,
+                                     branch_factor=branch_factor, input_dim=32,
+                                     clamp_value=clamp_value)
+
+        # Block 2
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.react_efta2 = ReActEFTA(num_units=64, depth=depth,
+                                     branch_factor=branch_factor, input_dim=64,
+                                     clamp_value=clamp_value)
+
+        # Compute feature size after 2 max pooling operations (each halves the size)
+        # After conv1+pool: size/2, after conv2+pool: size/4
+        feature_size = input_size // 4
+        fc1_input_size = 64 * feature_size * feature_size
+        
+        # Dense
+        self.fc1 = nn.Linear(fc1_input_size, 128)
+        self.bn3 = nn.BatchNorm1d(128)
+        self.react_efta3 = ReActEFTA(num_units=128, depth=depth,
+                                     branch_factor=branch_factor, input_dim=128,
+                                     clamp_value=clamp_value)
+        self.fc2 = nn.Linear(128, num_classes)
+
+        self.dropout2d = nn.Dropout2d(0.25)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        # Ensure input is (batch, channels, height, width)
+        if len(x.shape) == 3:
+            x = x.unsqueeze(1)
+        elif len(x.shape) == 4 and x.shape[-1] <= 4:
+            x = x.permute(0, 3, 1, 2)
+
+        # Block 1
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.react_efta1(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        x = F.max_pool2d(x, 2)
+        x = self.dropout2d(x)
+
+        # Block 2
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.react_efta2(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        x = F.max_pool2d(x, 2)
+        x = self.dropout2d(x)
+
+        # Dense
+        x = x.reshape(x.size(0), -1)
+        x = self.fc1(x)
+        x = self.bn3(x)
+        x = self.react_efta3(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+
+        return x
+
+
+def create_cnn_react_efta(depth=2, branch_factor=2, input_shape=(1, 28, 28), num_classes=10):
+    """Create CNN with REAct-EFTA."""
+    input_channels = input_shape[0] if isinstance(input_shape, tuple) else 1
+    input_size = input_shape[1] if isinstance(input_shape, tuple) and len(input_shape) > 1 else 28
+    return CNNReActEFTA(depth=depth, branch_factor=branch_factor,
+                        input_channels=input_channels, input_size=input_size,
+                        num_classes=num_classes)

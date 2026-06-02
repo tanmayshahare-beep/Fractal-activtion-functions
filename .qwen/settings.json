@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(comgra-test-run)",
+      "Bash(powershell *)",
+      "Bash(tasklist *)",
+      "Bash(dir *)",
+      "Bash(taskkill *)",
+      "Bash(tee *)",
+      "Bash(timeout *)",
+      "Bash(amp)",
+      "Bash(type *)",
+      "Bash(last *)",
+      "Bash(tasklist)",
+      "Bash(findstr *)",
+      "Bash(mkdir *)",
+      "Bash(move *)"
+    ]
+  },
+  "$version": 3
+}

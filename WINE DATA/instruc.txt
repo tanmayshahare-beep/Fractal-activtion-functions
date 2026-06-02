@@ -1,0 +1,233 @@
+Let's set up the Wine dataset experiment to test FTA vs. EFTA. I'll guide you through the steps, assuming you already have your FTA and EFTA PyTorch classes from your activations.py. If not, we'll sketch them quickly.
+
+1. Dataset: Wine Recognition
+Source: UCI / scikit-learn built-in
+
+Samples: 178
+
+Features: 13 (chemical analysis)
+
+Classes: 3 (cultivar types)
+
+Complexity: Low to medium (small dataset, but non‑linear boundaries)
+
+Goal: Compare test accuracy of MLPs with FTA, EFTA, ReLU, and Maxout. Run multiple seeds to see if the pattern (FTA may do well, but EFTA might also be competitive) aligns with your thesis.
+
+2. Setup & Code
+2.1. Load and preprocess data
+python
+from sklearn.datasets import load_wine
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+# Load
+data = load_wine()
+X, y = data.data, data.target
+
+# Train/val/test split (60/20/20)
+X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.4, random_state=42, stratify=y)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
+
+# Standardize
+scaler = StandardScaler().fit(X_train)
+X_train = scaler.transform(X_train)
+X_val = scaler.transform(X_val)
+X_test = scaler.transform(X_test)
+
+# Convert to tensors
+X_train = torch.tensor(X_train, dtype=torch.float32)
+y_train = torch.tensor(y_train, dtype=torch.long)
+X_val = torch.tensor(X_val, dtype=torch.float32)
+y_val = torch.tensor(y_val, dtype=torch.long)
+X_test = torch.tensor(X_test, dtype=torch.float32)
+y_test = torch.tensor(y_test, dtype=torch.long)
+
+# DataLoaders
+batch_size = 16
+train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+val_loader   = DataLoader(TensorDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
+test_loader  = DataLoader(TensorDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
+2.2. Define MLP with pluggable activation
+python
+import torch.nn as nn
+
+class MLP(nn.Module):
+    def __init__(self, input_dim=13, hidden_dims=[64, 32], output_dim=3, activation_fn=None):
+        super().__init__()
+        layers = []
+        prev_dim = input_dim
+        for h_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, h_dim))
+            layers.append(activation_fn())  # activation must be a callable that returns a module
+            prev_dim = h_dim
+        layers.append(nn.Linear(prev_dim, output_dim))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+2.3. Wrapper for your FTA/EFTA
+Since your FTA/EFTA classes are probably designed for convolutional layers (expecting shape [batch, channels, ...]), we need to adapt them for MLP (shape [batch, features]). Your original implementation likely expects an input with a spatial dimension; we can simply flatten or treat the feature dimension as the "channel" dimension.
+
+For simplicity, we'll assume your FTA class looks something like this (based on your context):
+
+python
+class FTA(nn.Module):
+    def __init__(self, depth, branch, in_features):
+        super().__init__()
+        # define leaf parameters...
+    def forward(self, x):
+        # x shape: (batch, in_features) or (batch, channels, ...)
+        # we'll handle both cases
+        ...
+We can wrap it to accept in_features as the number of neurons, and treat each neuron independently. One straightforward way is to apply FTA elementwise to the feature dimension – i.e., each neuron has its own tree. In your CNN experiments, each feature map (channel) had its own tree; for MLP, each hidden unit corresponds to a "channel" of width 1. So you can simply use FTA(depth, branch, in_features=hidden_dim) and then apply it to the output of the linear layer.
+
+Example wrapper (if your FTA expects (batch, channels, ...) you can unsqueeze):
+
+python
+class FTA_MLP(nn.Module):
+    def __init__(self, depth, branch, in_features):
+        super().__init__()
+        self.fta = FTA(depth, branch, in_features)  # in_features = number of neurons
+    def forward(self, x):
+        # x shape: (batch, in_features)
+        x = x.unsqueeze(-1).unsqueeze(-1)  # (batch, in_features, 1, 1) to mimic 1x1 feature map
+        x = self.fta(x)
+        return x.squeeze(-1).squeeze(-1)   # back to (batch, in_features)
+Similarly for EFTA.
+
+2.4. Training function
+python
+def train_model(model, train_loader, val_loader, epochs=100, lr=0.001, patience=10):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+
+    best_val_acc = 0.0
+    best_epoch = 0
+    counter = 0
+
+    for epoch in range(epochs):
+        # Training
+        model.train()
+        train_loss = 0.0
+        for Xb, yb in train_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            optimizer.zero_grad()
+            out = model(Xb)
+            loss = criterion(out, yb)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+
+        # Validation
+        model.eval()
+        val_correct = 0
+        val_total = 0
+        with torch.no_grad():
+            for Xb, yb in val_loader:
+                Xb, yb = Xb.to(device), yb.to(device)
+                out = model(Xb)
+                pred = out.argmax(dim=1)
+                val_correct += (pred == yb).sum().item()
+                val_total += yb.size(0)
+        val_acc = val_correct / val_total * 100
+
+        scheduler.step(100.0 - val_acc)  # ReduceLROnPlateau on validation error
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch = epoch
+            counter = 0
+            # Save best model state (optional)
+            torch.save(model.state_dict(), 'best_model.pt')
+        else:
+            counter += 1
+            if counter >= patience:
+                print(f"Early stopping at epoch {epoch}")
+                break
+
+    # Load best model and evaluate on test
+    model.load_state_dict(torch.load('best_model.pt'))
+    model.eval()
+    test_correct = 0
+    test_total = 0
+    with torch.no_grad():
+        for Xb, yb in test_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            out = model(Xb)
+            pred = out.argmax(dim=1)
+            test_correct += (pred == yb).sum().item()
+            test_total += yb.size(0)
+    test_acc = test_correct / test_total * 100
+    return test_acc
+2.5. Run experiments with multiple seeds
+python
+import numpy as np
+import random
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+activations = {
+    'ReLU': lambda: nn.ReLU(),
+    'Maxout': lambda: nn.Maxout(in_features=64, piece=4),  # need to adapt Maxout if you have it
+    'FTA (d=2,k=2)': lambda: FTA_MLP(depth=2, branch=2, in_features=64),
+    'FTA (d=3,k=2)': lambda: FTA_MLP(depth=3, branch=2, in_features=64),
+    'EFTA (d=2,k=2)': lambda: EFTA_MLP(depth=2, branch=2, in_features=64),
+    'EFTA (d=3,k=2)': lambda: EFTA_MLP(depth=3, branch=2, in_features=64),
+}
+
+results = {}
+n_seeds = 10
+
+for name, act_builder in activations.items():
+    accs = []
+    for seed in range(n_seeds):
+        set_seed(seed)
+        model = MLP(input_dim=13, hidden_dims=[64, 32], output_dim=3, activation_fn=act_builder)
+        test_acc = train_model(model, train_loader, val_loader, epochs=200, patience=15)
+        accs.append(test_acc)
+        print(f"{name} seed {seed}: {test_acc:.2f}%")
+    results[name] = accs
+
+# Print summary
+for name, accs in results.items():
+    mean = np.mean(accs)
+    std = np.std(accs)
+    print(f"{name}: {mean:.2f}% ± {std:.2f}%")
+2.6. Notes on Maxout
+If you don't have a Maxout layer ready for MLPs, you can implement a simple one:
+
+python
+class Maxout(nn.Module):
+    def __init__(self, in_features, out_features, piece=4):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.piece = piece
+        self.linear = nn.Linear(in_features, out_features * piece)
+
+    def forward(self, x):
+        x = self.linear(x)
+        x = x.view(-1, self.out_features, self.piece)
+        x = x.max(dim=2)[0]
+        return x
+But then the MLP definition must be adjusted because Maxout changes the dimension. For simplicity, you might skip Maxout and just compare ReLU vs FTA vs EFTA.
+
+3. Expected Outcome
+Wine is a small dataset; all models should achieve 95–100% test accuracy with proper regularization.
+
+Hypothesis: FTA may slightly outperform EFTA because the dataset is not extremely complex (like CIFAR‑10). However, EFTA might still be competitive due to its strong inductive bias and parameter efficiency.
+
+The key is whether the relative ordering matches your thesis: on moderately complex tabular data, FTA (linear) could be as good or better than EFTA.
+
+If you see that EFTA performs worse on Wine, that would support your claim that exponential branches are more beneficial on complex natural images but not on simpler data. If EFTA also wins, it would suggest the reversal might not hold for tabular data, which is still interesting.
+
